@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
@@ -16,6 +17,7 @@ import (
 var (
 	upgrader = websocket.Upgrader{
 		// CheckOrigin mengizinkan koneksi dari origin manapun. Untuk production, ini harus dibatasi.
+		// TODO: Ganti dengan daftar origin yang diizinkan di lingkungan produksi.
 		CheckOrigin: func(r *http.Request) bool {
 			return true
 		},
@@ -25,23 +27,26 @@ var (
 // ChatUsecaseImpl adalah implementasi dari ChatUsecase yang menangani logika real-time chat.
 // Dependensi: bergantung pada ChatRepository untuk menyimpan pesan.
 type ChatUsecaseImpl struct {
-	chatRepo ChatRepository
-	mu       sync.RWMutex
+	chatRepo  ChatRepository
+	chatMongo *MongoChatRepository
+	mu        sync.RWMutex
 	// rooms adalah map untuk menampung koneksi WebSocket yang aktif untuk setiap room.
 	// Kunci luar adalah roomID, kunci dalam adalah pointer ke koneksi WebSocket.
-	rooms    map[string]map[*websocket.Conn]bool
+	rooms map[string]map[*websocket.Conn]bool
 }
 
 // NewChatUsecase membuat instance baru dari ChatUsecaseImpl.
-func NewChatUsecase(chatRepo ChatRepository) *ChatUsecaseImpl {
+func NewChatUsecase(chatRepo ChatRepository, chatMongo *MongoChatRepository) *ChatUsecaseImpl {
 	return &ChatUsecaseImpl{
-		chatRepo: chatRepo,
-		rooms:    make(map[string]map[*websocket.Conn]bool),
+		chatRepo:  chatRepo,
+		chatMongo: chatMongo,
+		rooms:     make(map[string]map[*websocket.Conn]bool),
 	}
 }
 
 // HandleStream adalah method utama yang menangani siklus hidup koneksi WebSocket.
 func (uc *ChatUsecaseImpl) HandleStream(ctx context.Context, roomID string, c echo.Context) error {
+
 	// 1. Upgrade koneksi HTTP ke koneksi WebSocket.
 	ws, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
 	if err != nil {
@@ -63,8 +68,30 @@ func (uc *ChatUsecaseImpl) HandleStream(ctx context.Context, roomID string, c ec
 			break
 		}
 
-		// TODO: Ambil userID dari token JWT yang ada di context, bukan hardcoded.
-		userID := "temp-user-id"
+		// Mengambil token JWT dari context, yang seharusnya sudah divalidasi oleh middleware.
+		userToken, ok := c.Get("user").(*jwt.Token)
+		if !ok {
+			// Jika token tidak ditemukan atau tipe-nya salah, ini adalah error internal.
+			log.Println("failed to get user token from context")
+			// Sebaiknya kirim pesan error ke client dan tutup koneksi.
+			ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "internal server error"))
+			break
+		}
+		// Mengekstrak claims dari token.
+		claims, ok := userToken.Claims.(jwt.MapClaims)
+		if !ok {
+			log.Println("failed to cast claims from token")
+			ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "internal server error"))
+			break
+		}
+
+		// Mengambil userID dari claims.
+		userID, ok := claims["sub"].(string)
+		if !ok {
+			log.Println("failed to get userID from claims")
+			ws.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "internal server error"))
+			break
+		}
 
 		// 4. Buat entitas Message baru.
 		newMessage := &Message{
@@ -74,9 +101,8 @@ func (uc *ChatUsecaseImpl) HandleStream(ctx context.Context, roomID string, c ec
 			Content:   string(msgBytes),
 			CreatedAt: time.Now(),
 		}
-
 		// 5. Simpan pesan ke database melalui repository.
-		if err := uc.chatRepo.CreateMessage(ctx, newMessage); err != nil {
+		if err := uc.chatMongo.CreateMessage(ctx, newMessage); err != nil {
 			log.Println("write error:", err)
 			continue
 		}
@@ -120,6 +146,7 @@ func (uc *ChatUsecaseImpl) broadcast(roomID string, msg *Message) {
 	for conn := range uc.rooms[roomID] {
 		if err := conn.WriteJSON(msg); err != nil {
 			log.Println("write error:", err)
+			uc.removeConnection(roomID, conn)
 		}
 	}
 }

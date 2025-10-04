@@ -26,6 +26,7 @@ func (h *Router) SetupRoutes(e *echo.Echo, userHandler *user.UserHandler, chatHa
 	// Grup rute yang diproteksi menggunakan JWT Auth.
 	// Hanya request dengan header `Authorization: Bearer <token>` yang valid yang bisa mengakses rute di grup ini.
 	jwtGroup := e.Group("/v1", middleware.JWTMiddleware(jwtSecret))
-	jwtGroup.GET("/users/:id", userHandler.GetByID)             // Endpoint untuk mendapatkan data user.
-	jwtGroup.GET("/ws/:roomID", chatHandler.HandleWebSocket) // Endpoint untuk koneksi WebSocket chat.
+	jwtGroup.GET("/users/:id", userHandler.GetByID)  // Endpoint untuk mendapatkan data user.
+	jwtGroup.GET("/ws", chatHandler.HandleWebSocket) // Endpoint untuk koneksi WebSocket chat.
+
 }

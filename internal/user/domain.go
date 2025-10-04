@@ -18,12 +18,16 @@ type User struct {
 	UpdatedAt    time.Time `json:"updated_at" bson:"updated_at"`
 }
 
+type Filter struct {
+	Email string
+}
+
 // UserRepository mendefinisikan kontrak (interface) untuk lapisan persistensi (database).
 // Setiap struct repository (misal: MongoUserRepository) harus mengimplementasikan semua method ini.
 // Ini memungkinkan kita untuk menukar implementasi database tanpa mengubah logika bisnis.
 // Dependensi: lapisan Usecase bergantung pada interface ini.
 type UserRepository interface {
-	Create(ctx context.Context, user *User) error
+	Create(ctx context.Context, filter Filter, user *User) error
 	GetByID(ctx context.Context, id string) (*User, error)
 	GetByEmail(ctx context.Context, email string) (*User, error)
 }

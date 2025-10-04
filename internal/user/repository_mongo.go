@@ -5,6 +5,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // MongoUserRepository adalah implementasi dari UserRepository yang menggunakan MongoDB sebagai penyimpanannya.
@@ -24,9 +25,23 @@ func NewMongoUserRepository(db *mongo.Database) *MongoUserRepository {
 }
 
 // Create menyimpan sebuah entitas User baru ke dalam koleksi `users` di MongoDB.
-func (r *MongoUserRepository) Create(ctx context.Context, user *User) error {
-	_, err := r.db.Collection(r.collection).InsertOne(ctx, user)
-	return err
+func (r *MongoUserRepository) Create(ctx context.Context, filter Filter, user *User) error {
+	opts := options.FindOneAndUpdate().SetUpsert(true)
+
+	update := bson.M{
+		"$set": bson.M{
+			"email":         user.Email,
+			"password_hash": user.PasswordHash,
+			"updated_at":    user.UpdatedAt,
+		},
+		"$setOnInsert": bson.M{
+			"_id":        user.ID,
+			"created_at": user.CreatedAt,
+		},
+	}
+
+	result := r.db.Collection(r.collection).FindOneAndUpdate(ctx, filter, update, opts)
+	return result.Err()
 }
 
 // GetByID mencari dan mengembalikan seorang pengguna berdasarkan ID-nya dari database.

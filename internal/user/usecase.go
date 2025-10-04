@@ -44,8 +44,12 @@ func (uc *UserUsecaseImpl) Create(ctx context.Context, email, password string) (
 		UpdatedAt:    now,
 	}
 
+	filter := Filter{
+		Email: email,
+	}
+
 	// Memanggil lapisan repository untuk menyimpan user baru.
-	if err := uc.userRepo.Create(ctx, newUser); err != nil {
+	if err := uc.userRepo.Create(ctx, filter, newUser); err != nil {
 		return nil, fmt.Errorf("tidak bisa membuat user: %w", err)
 	}
 

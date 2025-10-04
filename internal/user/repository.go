@@ -27,6 +27,7 @@ func (r *InMemoryUserRepository) Create(ctx context.Context, user *User) error {
 	if _, exists := r.users[user.ID]; exists {
 		return fmt.Errorf("user with id %s already exists", user.ID)
 	}
+	
 	r.users[user.ID] = user
 	return nil
 }

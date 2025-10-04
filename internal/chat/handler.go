@@ -20,7 +20,7 @@ func NewChatHandler(chatUsecase ChatUsecase) *ChatHandler {
 // Tugas utamanya adalah mengekstrak parameter dan meneruskan kontrol ke lapisan use case.
 func (h *ChatHandler) HandleWebSocket(c echo.Context) error {
 	// Mengambil ID room dari parameter URL.
-	roomID := c.Param("roomID")
+	roomID := c.QueryParam("roomId")
 	// Memanggil use case untuk menangani seluruh logika streaming WebSocket.
 	return h.chatUsecase.HandleStream(c.Request().Context(), roomID, c)
 }

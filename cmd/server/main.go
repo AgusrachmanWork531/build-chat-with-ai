@@ -28,7 +28,8 @@ func main() {
 
 	// Untuk chat, kita masih menggunakan repository in-memory.
 	chatRepo := chat.NewInMemoryChatRepository()
-	chatUsecase := chat.NewChatUsecase(chatRepo)
+	chatMongo := chat.NewMongoChatRepository(db)
+	chatUsecase := chat.NewChatUsecase(chatRepo, chatMongo)
 	chatHandler := chat.NewChatHandler(chatUsecase)
 
 	// 4. Membuat instance baru dari web server Echo.
