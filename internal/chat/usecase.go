@@ -2,11 +2,14 @@ package chat
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/gemini-cli/portfolio-chat-ai-go/pkg/config"
+	"github.com/gemini-cli/portfolio-chat-ai-go/pkg/gemini"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -27,20 +30,22 @@ var (
 // ChatUsecaseImpl adalah implementasi dari ChatUsecase yang menangani logika real-time chat.
 // Dependensi: bergantung pada ChatRepository untuk menyimpan pesan.
 type ChatUsecaseImpl struct {
-	chatRepo  ChatRepository
-	chatMongo *MongoChatRepository
-	mu        sync.RWMutex
+	chatMongo    *MongoChatRepository
+	geminiClient *gemini.Client
+	cfg          *config.Config
+	mu           sync.RWMutex
 	// rooms adalah map untuk menampung koneksi WebSocket yang aktif untuk setiap room.
 	// Kunci luar adalah roomID, kunci dalam adalah pointer ke koneksi WebSocket.
 	rooms map[string]map[*websocket.Conn]bool
 }
 
 // NewChatUsecase membuat instance baru dari ChatUsecaseImpl.
-func NewChatUsecase(chatRepo ChatRepository, chatMongo *MongoChatRepository) *ChatUsecaseImpl {
+func NewChatUsecase(chatMongo *MongoChatRepository, geminiClient *gemini.Client, cfg *config.Config) *ChatUsecaseImpl {
 	return &ChatUsecaseImpl{
-		chatRepo:  chatRepo,
-		chatMongo: chatMongo,
-		rooms:     make(map[string]map[*websocket.Conn]bool),
+		chatMongo:    chatMongo,
+		geminiClient: geminiClient,
+		cfg:          cfg,
+		rooms:        make(map[string]map[*websocket.Conn]bool),
 	}
 }
 
@@ -56,6 +61,7 @@ func (uc *ChatUsecaseImpl) HandleStream(ctx context.Context, roomID string, c ec
 
 	// 2. Tambahkan koneksi baru ini ke dalam daftar koneksi aktif untuk room ini.
 	uc.addConnection(roomID, ws)
+
 	// Pastikan koneksi dihapus saat fungsi ini berakhir (koneksi terputus).
 	defer uc.removeConnection(roomID, ws)
 
@@ -93,7 +99,7 @@ func (uc *ChatUsecaseImpl) HandleStream(ctx context.Context, roomID string, c ec
 			break
 		}
 
-		// 4. Buat entitas Message baru.
+		// 4. Buat entitas Message baru untuk pesan pengguna.
 		newMessage := &Message{
 			ID:        uuid.NewString(),
 			RoomID:    roomID,
@@ -101,14 +107,46 @@ func (uc *ChatUsecaseImpl) HandleStream(ctx context.Context, roomID string, c ec
 			Content:   string(msgBytes),
 			CreatedAt: time.Now(),
 		}
-		// 5. Simpan pesan ke database melalui repository.
+		// 5. Simpan pesan pengguna ke database.
 		if err := uc.chatMongo.CreateMessage(ctx, newMessage); err != nil {
 			log.Println("write error:", err)
 			continue
 		}
 
-		// 6. Siarkan (broadcast) pesan ke semua client lain di room yang sama.
+		// 6. Siarkan pesan pengguna ke semua client.
 		uc.broadcast(roomID, newMessage)
+
+		// 7. Panggil Gemini API untuk mendapatkan balasan dalam sebuah goroutine.
+		go func() {
+			// Kirim indikator "mulai mengetik".
+			uc.broadcastEvent(roomID, map[string]interface{}{"type": "typing_indicator", "is_typing": true, "user_id": "GEMINI"})
+			// Pastikan indikator "berhenti mengetik" dikirim saat goroutine selesai.
+			defer uc.broadcastEvent(roomID, map[string]interface{}{"type": "typing_indicator", "is_typing": false, "user_id": "GEMINI"})
+
+			aiResponse, err := uc.geminiClient.GenerateContent(context.Background(), newMessage.Content)
+			if err != nil {
+				log.Printf("failed to get response from gemini: %v", err)
+				return
+			}
+
+			// 8. Buat entitas Message untuk balasan AI.
+			aiMessage := &Message{
+				ID:        uuid.NewString(),
+				RoomID:    roomID,
+				UserID:    "GEMINI", // ID khusus untuk menandakan pesan dari AI.
+				Content:   aiResponse,
+				CreatedAt: time.Now(),
+			}
+
+			// 9. Simpan balasan AI ke database.
+			if err := uc.chatMongo.CreateMessage(context.Background(), aiMessage); err != nil {
+				log.Println("write error for ai message:", err)
+				return
+			}
+
+			// 10. Siarkan balasan AI ke semua client.
+			uc.broadcast(roomID, aiMessage)
+		}()
 	}
 
 	return nil
@@ -118,6 +156,22 @@ func (uc *ChatUsecaseImpl) HandleStream(ctx context.Context, roomID string, c ec
 func (uc *ChatUsecaseImpl) addConnection(roomID string, ws *websocket.Conn) {
 	uc.mu.Lock()
 	defer uc.mu.Unlock()
+
+	aiResponse, err := uc.geminiClient.GenerateContent(context.Background(), uc.cfg.PromptTema)
+	if err != nil {
+		log.Printf("failed to get response from gemini: %v", err)
+		return
+	}
+
+	subs := aiResponse
+	maxLen := 500
+	runes := []rune(subs)
+	if len(runes) > maxLen {
+		subs = string(runes[:maxLen]) + "..."
+	}
+
+	// LOG RESPONSE
+	fmt.Println("Gemini Response:", subs)
 
 	if _, ok := uc.rooms[roomID]; !ok {
 		uc.rooms[roomID] = make(map[*websocket.Conn]bool)
@@ -145,6 +199,34 @@ func (uc *ChatUsecaseImpl) broadcast(roomID string, msg *Message) {
 
 	for conn := range uc.rooms[roomID] {
 		if err := conn.WriteJSON(msg); err != nil {
+			log.Println("write error:", err)
+			uc.removeConnection(roomID, conn)
+		}
+	}
+}
+
+// broadcastEvent mengirimkan event generic (dalam format JSON) ke semua koneksi di sebuah room.
+func (uc *ChatUsecaseImpl) broadcastEvent(roomID string, event interface{}) {
+	uc.mu.RLock()
+	defer uc.mu.RUnlock()
+
+	for conn := range uc.rooms[roomID] {
+		if err := conn.WriteJSON(event); err != nil {
+			log.Println("write error on event broadcast:", err)
+		}
+	}
+}
+
+func (uc *ChatUsecaseImpl) TypingIndicator(roomID string, userID string) {
+	uc.mu.RLock()
+	defer uc.mu.RUnlock()
+
+	indicator := map[string]string{
+		"user_id": userID,
+		"status":  "typing",
+	}
+	for conn := range uc.rooms[roomID] {
+		if err := conn.WriteJSON(indicator); err != nil {
 			log.Println("write error:", err)
 			uc.removeConnection(roomID, conn)
 		}

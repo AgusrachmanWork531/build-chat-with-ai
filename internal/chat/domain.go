@@ -15,6 +15,7 @@ type Message struct {
 	UserID    string    `json:"user_id"`
 	Content   string    `json:"content"`
 	CreatedAt time.Time `json:"created_at"`
+	status    string    `json:"status"` // "user" atau "system"
 }
 
 // ChatRepository mendefinisikan kontrak untuk lapisan persistensi chat.

@@ -6,6 +6,8 @@ import (
 	"github.com/gemini-cli/portfolio-chat-ai-go/internal/chat"
 	"github.com/gemini-cli/portfolio-chat-ai-go/internal/user"
 	"github.com/gemini-cli/portfolio-chat-ai-go/pkg/bootstrap"
+	"github.com/gemini-cli/portfolio-chat-ai-go/pkg/gemini"
+	"github.com/gemini-cli/portfolio-chat-ai-go/pkg/middleware"
 	"github.com/labstack/echo/v4"
 )
 
@@ -26,18 +28,23 @@ func main() {
 	userUsecase := user.NewUserUsecase(userRepo, cfg.JWTSecret)
 	userHandler := user.NewUserHandler(userUsecase)
 
-	// Untuk chat, kita masih menggunakan repository in-memory.
-	chatRepo := chat.NewInMemoryChatRepository()
+	// Inisialisasi klien Gemini.
+	geminiClient := gemini.NewClient(cfg.GeminiAPIKey)
+
+	// Inisialisasi dependensi untuk domain Chat menggunakan Mongo.
 	chatMongo := chat.NewMongoChatRepository(db)
-	chatUsecase := chat.NewChatUsecase(chatRepo, chatMongo)
+	chatUsecase := chat.NewChatUsecase(chatMongo, geminiClient, cfg)
 	chatHandler := chat.NewChatHandler(chatUsecase)
+
+	// Membuat instance middleware terpusat.
+	middlewares := middleware.NewMiddleware(cfg)
 
 	// 4. Membuat instance baru dari web server Echo.
 	e := echo.New()
 
 	// 5. Mendaftarkan semua rute (endpoints) ke server Echo.
 	router := &Router{}
-	router.SetupRoutes(e, userHandler, chatHandler, cfg.JWTSecret, cfg.BasicAuthUser, cfg.BasicAuthPass)
+	router.SetupRoutes(e, userHandler, chatHandler, middlewares)
 
 	// 6. Menjalankan server.
 	log.Printf("Server berjalan di port %s", cfg.AppPort)

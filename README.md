@@ -1,16 +1,18 @@
-# Go Secure Backend Service with Clean Architecture
+# Go Secure Backend Service with Clean Architecture & AI Chat
 
-This project is a secure, high-performance, and maintainable RESTful API built in Golang using the Echo framework. It demonstrates the principles of Clean Architecture, SOLID, and Clean Code, with a focus on robust authentication and separation of concerns.
+This project is a secure, high-performance, and maintainable RESTful API built in Golang using the Echo framework. It demonstrates the principles of Clean Architecture, SOLID, and Clean Code, with a focus on robust authentication, separation of concerns, and real-time chat integration with Google Gemini.
 
 ## Features
 
 -   **User Management:** Core CRUD functionality for a User entity.
+-   **Real-time Chat:** WebSocket-based chat rooms.
+-   **AI Integration:** Chat responses are powered by Google Gemini.
 -   **Secure Endpoints:**
-    -   **JWT Authentication:** Protects user-specific endpoints.
+    -   **JWT Authentication:** Protects user-specific endpoints, including WebSocket connections.
     -   **Basic Authentication:** Protects administrative or internal endpoints.
 -   **Clean Architecture:** A clear separation between business logic and framework-specific code.
--   **Dependency Injection:** Interfaces are used to decouple layers.
--   **Configuration Management:** Centralized configuration for application settings.
+-   **Dependency Injection:** Interfaces are used to decouple layers, managed in a central `bootstrap` package.
+-   **Configuration Management:** Centralized configuration loaded from environment variables (`.env` supported).
 -   **Makefile:** Simplified commands for running, building, and managing the project.
 
 ## Architecture
@@ -18,25 +20,73 @@ This project is a secure, high-performance, and maintainable RESTful API built i
 This project follows the principles of **Clean Architecture**. The dependencies flow inwards, from the outer layers (frameworks, UI) to the inner layers (business logic, entities).
 
 ```
-+-----------------------------------------------------------------+
++-----------------------------------------------------------------+ 
 |                            Frameworks                           |
-| +-------------------------------------------------------------+ |
-| |                          Handlers                           | |
-| | +---------------------------------------------------------+ | |
-| | |                         Usecases                        | | |
-| | | +-----------------------------------------------------+ | | |
-| | | |                      Entities                       | | | |
-| | | +-----------------------------------------------------+ | | |
-| | +---------------------------------------------------------+ | |
-| +-------------------------------------------------------------+ |
+| +-------------------------------------------------------------+ | 
+| |                          Handlers                           | | 
+| | +---------------------------------------------------------+ | | 
+| | |                         Usecases                        | | | 
+| | | +-----------------------------------------------------+ | | | 
+| | | |                      Entities                       | | | | 
+| | | +-----------------------------------------------------+ | | | 
+| | +---------------------------------------------------------+ | | 
+| +-------------------------------------------------------------+ | 
 +-----------------------------------------------------------------+
 ```
 
--   **Domain/Entities (`internal/user/domain.go`):** The core of the application. It contains the `User` struct and the interfaces for the `UserRepository` and `UserUsecase`. This layer has no dependencies on any other layer.
--   **Repository (`internal/user/repository.go`):** Implements the `UserRepository` interface. It is responsible for data persistence. In this project, an in-memory repository is used for demonstration purposes.
--   **Usecase (`internal/user/usecase.go`):** Implements the `UserUsecase` interface. It contains the core business logic of the application, such as user creation, retrieval, and authentication. It depends on the `UserRepository` interface.
--   **Handler (`internal/user/handler.go`):** This layer is responsible for handling HTTP requests. It uses the `UserUsecase` to perform business operations. It depends on the `UserUsecase` interface.
--   **Main (`cmd/server/`):** This is the entry point of the application. It is responsible for initializing all the components and starting the server.
+-   **Domain/Entities (`internal/.../domain.go`):** The core of the application. Contains the data structures and the interfaces for repositories and use cases. This layer has no dependencies on any other layer.
+-   **Repository (`internal/.../repository_mongo.go`):** Implements the repository interface defined in the domain. It is responsible for all data persistence logic, communicating directly with the database (MongoDB).
+-   **Usecase (`internal/.../usecase.go`):** Implements the use case interface. It contains the core business logic of the application (e.g., user creation, login, handling a chat stream). It orchestrates data flow between repositories and other services.
+-   **Handler (`internal/.../handler.go`):** This layer is responsible for handling HTTP/WebSocket requests. It parses requests, calls the appropriate use case, and formats the response. It is the bridge between the framework and the business logic.
+-   **Main (`cmd/server/`):** The entry point of the application. It is responsible for initializing all the components (bootstrap), setting up the router, and starting the server.
+
+## Chat Flow (Mermaid Diagram)
+
+This diagram illustrates the sequence of events during a chat session with AI integration.
+
+```mermaid
+sequenceDiagram
+    participant User as Client Browser
+    participant Server as WebSocket Server
+    participant Auth as JWT Authentication
+    participant Usecase as Chat Usecase
+    participant Repo as Message Repository
+    participant AI as Google Gemini AI
+    
+    User->>Server: Connect to /v1/ws?roomId=123
+    Server->>Auth: Validate JWT Token
+    Auth-->>Server: Token Valid
+    Server->>Usecase: establishConnection(roomID, userID, ws)
+    Usecase->>Repo: GetRoomHistory(roomID)
+    Repo-->>Usecase: Previous Messages
+    Usecase-->>User: Send chat history
+    
+    Usecase->>AI: GenerateWelcomeMessage()
+    AI-->>Usecase: AI Welcome Message
+    Usecase->>Repo: SaveMessage(AI welcome)
+    Usecase->>User: Send AI Welcome Message
+    
+    Note over User,AI: Normal Chat Flow
+    
+    User->>Server: Send Message: "How does this work?"
+    Server->>Usecase: processMessage(userMsg)
+    Usecase->>Repo: SaveMessage(userMsg)
+    Usecase->>User: Broadcast user message to room
+    
+    Usecase->>User: Send typing indicator {is_typing: true}
+    Usecase->>AI: GenerateContent(userMsg, context)
+    AI-->>Usecase: AI Response
+    Usecase->>User: Send typing indicator {is_typing: false}
+    
+    Usecase->>Repo: SaveMessage(AI response)
+    Usecase->>User: Broadcast AI response to room
+    
+    Note over User,Server: Connection Close
+    
+    User->>Server: Close WebSocket
+    Server->>Usecase: handleDisconnect(userID, roomID)
+    Usecase->>Repo: UpdateUserStatus(offline)
+```
 
 ## API Endpoints
 
@@ -45,6 +95,7 @@ This project follows the principles of **Clean Architecture**. The dependencies 
 | `POST` | `/v1/login`       | Public         | Authenticate and get a JWT.  |
 | `POST` | `/v1/users`       | Basic Auth     | Create a new user.           |
 | `GET`  | `/v1/users/:id`   | JWT            | Get a user by their ID.      |
+| `GET`  | `/v1/ws`          | JWT            | Connect to the chat WebSocket. Requires `roomId` as query param. |
 
 ## Getting Started
 
@@ -52,6 +103,7 @@ This project follows the principles of **Clean Architecture**. The dependencies 
 
 -   Go 1.18 or higher
 -   `make`
+-   A running MongoDB instance.
 
 ### Installation
 
@@ -61,7 +113,9 @@ This project follows the principles of **Clean Architecture**. The dependencies 
     cd portfolio-chat-ai-go
     ```
 
-2.  Tidy the dependencies:
+2.  Create a `.env` file in the root of the project and fill in the required variables. You can use `.env.example` as a template.
+
+3.  Tidy the dependencies:
     ```bash
     make tidy
     ```
@@ -74,57 +128,14 @@ To run the application, use the following command:
 make run
 ```
 
-The server will start on `http://localhost:8080`.
-
-## How to Use
-
-### 1. Create a User (Basic Auth)
-
-Use the default credentials `admin:password` for Basic Auth to authorize the creation, and provide the new user's credentials in the URL.
-
-```bash
-# The -u flag provides the Basic Auth credentials (admin:password)
-# The user's email and password for the new user are passed in the request body
-curl -X POST http://localhost:8080/v1/users -u "admin:password" \
--H "Content-Type: application/json" \
--d 
-    "email": "newuser@example.com",
-    "password": "password123"
-}'
-```
-
-### 2. Login (Public)
-
-Use the email and password of the user you just created.
-
-```bash
-curl -X POST http://localhost:8080/v1/login \
--H "Content-Type: application/json" \
--d 
-    "email": "newuser@example.com",
-    "password": "password123"
-}'
-```
-
-This will return a JWT token.
-
-### 3. Get User by ID (JWT)
-
-Copy the JWT token from the login response and the user ID from the create user response.
-
-```bash
-export TOKEN="your.jwt.token"
-export USER_ID="the-user-id"
-
-curl -X GET http://localhost:8080/v1/users/$USER_ID \
--H "Authorization: Bearer $TOKEN"
-```
+The server will start on the port specified in your `.env` file (e.g., `http://localhost:8080`).
 
 ## Project Structure
 
 ```
 .
-├── .env
+├── .env.example
+├── .gitignore
 ├── Makefile
 ├── README.md
 ├── cmd
@@ -137,7 +148,7 @@ curl -X GET http://localhost:8080/v1/users/$USER_ID \
 │   ├── chat
 │   │   ├── domain.go
 │   │   ├── handler.go
-│   │   ├── repository.go
+│   │   ├── repository_mongo.go
 │   │   └── usecase.go
 │   └── user
 │       ├── domain.go
@@ -152,21 +163,23 @@ curl -X GET http://localhost:8080/v1/users/$USER_ID \
     │   └── config.go
     ├── database
     │   └── mongo.go
+    ├── gemini
+    │   └── client.go
     └── middleware
-        └── auth.go
+        ├── auth.go
+        ├── integration.go
+        └── integration_ai.go
 ```
 
--   **`.env`**: Menyimpan environment variables untuk development lokal.
--   **`Makefile`**: Berisi perintah untuk menjalankan, membangun, dan merapikan proyek.
--   **`cmd/server`**: Titik masuk utama aplikasi dan penyiapan router.
--   **`internal`**: Berisi semua logika bisnis inti, dipisahkan berdasarkan domain (`user`, `chat`).
-    -   `domain.go`: Mendefinisikan struct dan interface inti untuk domain tersebut.
-    -   `handler.go`: Lapisan handler untuk HTTP/WebSocket.
-    -   `usecase.go`: Lapisan yang berisi logika bisnis inti.
-    -   `repository.go`: Implementasi repository in-memory (segera dihapus).
-    -   `repository_mongo.go`: Implementasi repository yang menggunakan MongoDB.
--   **`pkg`**: Berisi paket-paket yang dapat dibagikan dan digunakan di seluruh aplikasi.
-    -   `bootstrap`: Memusatkan logika startup aplikasi (koneksi DB, dll.).
-    -   `config`: Menangani pemuatan konfigurasi dari environment.
-    -   `database`: Menyediakan helper untuk koneksi database.
-    -   `middleware`: Berisi middleware Echo kustom (JWT, Basic Auth).
+-   **`cmd/server`**: Entry point and router setup.
+-   **`internal`**: Core business logic, separated by domain (`user`, `chat`).
+    -   `domain.go`: Defines structs and interfaces.
+    -   `handler.go`: HTTP/WebSocket handlers.
+    -   `usecase.go`: Core business logic layer.
+    -   `repository_mongo.go`: MongoDB repository implementation.
+-   **`pkg`**: Shared packages used across the application.
+    -   `bootstrap`: Application startup logic (DB connections, etc.).
+    -   `config`: Configuration loading.
+    -   `database`: DB connection helpers.
+    -   `gemini`: Client for interacting with the Google Gemini API.
+    -   `middleware`: Custom Echo middleware (JWT, Basic Auth, etc.).

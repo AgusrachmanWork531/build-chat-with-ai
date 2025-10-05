@@ -13,19 +13,19 @@ import (
 type Router struct{}
 
 // SetupRoutes mendefinisikan dan mengkonfigurasi semua rute (endpoints) aplikasi.
-// Fungsi ini menerima semua handler dan konfigurasi yang dibutuhkan untuk mendaftarkan rute ke instance Echo.
-func (h *Router) SetupRoutes(e *echo.Echo, userHandler *user.UserHandler, chatHandler *chat.ChatHandler, jwtSecret, basicUser, basicPass string) {
+// Fungsi ini menerima semua handler dan middleware yang dibutuhkan untuk mendaftarkan rute ke instance Echo.
+func (h *Router) SetupRoutes(e *echo.Echo, userHandler *user.UserHandler, chatHandler *chat.ChatHandler, m *middleware.Middleware) {
 	// Endpoint publik untuk login, tidak memerlukan autentikasi.
 	e.POST("/v1/login", userHandler.Login)
 
 	// Grup rute yang diproteksi menggunakan Basic Auth.
 	// Hanya request dengan header Basic Auth yang valid yang bisa mengakses rute di dalam grup ini.
-	basicAuthGroup := e.Group("/v1", middleware.BasicAuthMiddleware(basicUser, basicPass))
+	basicAuthGroup := e.Group("/v1", m.BasicAuth)
 	basicAuthGroup.POST("/users", userHandler.Create) // Endpoint untuk membuat user baru.
 
 	// Grup rute yang diproteksi menggunakan JWT Auth.
 	// Hanya request dengan header `Authorization: Bearer <token>` yang valid yang bisa mengakses rute di grup ini.
-	jwtGroup := e.Group("/v1", middleware.JWTMiddleware(jwtSecret))
+	jwtGroup := e.Group("/v1", m.JWT)
 	jwtGroup.GET("/users/:id", userHandler.GetByID)  // Endpoint untuk mendapatkan data user.
 	jwtGroup.GET("/ws", chatHandler.HandleWebSocket) // Endpoint untuk koneksi WebSocket chat.
 

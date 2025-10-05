@@ -11,12 +11,14 @@ import (
 
 // Config menampung semua variabel konfigurasi aplikasi yang diambil dari environment.
 type Config struct {
-	AppPort       string // Port yang digunakan oleh server aplikasi.
-	JWTSecret     string // Kunci rahasia untuk menandatangani token JWT.
-	BasicAuthUser string // Username untuk Basic Authentication.
-	BasicAuthPass string // Password untuk Basic Authentication.
-	MongoURI      string // URI untuk koneksi ke database MongoDB.
-	MongoDbName   string // Nama database MongoDB yang digunakan.
+	AppPort       string `env:"APP_PORT,required"`
+	MongoURI      string `env:"MONGO_URI,required"`
+	MongoDbName   string `env:"MONGO_DB_NAME,required"`
+	JWTSecret     string `env:"JWT_SECRET,required"`
+	BasicAuthUser string `env:"BASIC_AUTH_USER,required"`
+	BasicAuthPass string `env:"BASIC_AUTH_PASS,required"`
+	PromptTema    string `env:"PROMPT_TEMA,required"`
+	GeminiAPIKey  string `env:"GEMINI_API_KEY,required"`
 }
 
 // NewConfig membuat instance Config baru dengan membaca environment variables.
@@ -38,6 +40,9 @@ func NewConfig() *Config {
 		BasicAuthPass: getEnvOrFatal("BASIC_AUTH_PASS"),
 		MongoURI:      getEnvOrFatal("MONGO_URI"),
 		MongoDbName:   getEnvOrFatal("MONGO_DB"),
+
+		PromptTema:   getEnvOrFatal("PROMPT_TEMA"),
+		GeminiAPIKey: getEnvOrFatal("GEMINI_API_KEY"),
 	}
 }
 
